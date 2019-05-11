@@ -32,3 +32,4 @@ https://docs.google.com/spreadsheets/d/<ID>
     
     "GOOGLEDOC_CREDENTIALFILE_NAME": "credentials.json" - This is the credential file you got from step 2 of this readme
     
+4. Run updateBudget.py! Use your favorite Python IDE to modify and debug. Developed with Python 3.5, but other versions may work.
