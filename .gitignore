@@ -1,7 +1,7 @@
 #Configuration based files
 token.pickle
 credentials.json
-googlesheetscredential
+googlesheetscredential.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
