@@ -1,3 +1,8 @@
+#Configuration based files
+token.pickle
+credentials.json
+googlesheetscredential
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
