@@ -1,0 +1,5 @@
+requests==2.20.0
+plaid-python>=3.0
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
