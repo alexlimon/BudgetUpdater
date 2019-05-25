@@ -1,4 +1,5 @@
 from __future__ import print_function
+from apscheduler.schedulers.blocking import BlockingScheduler
 import pickle
 import os.path
 from datetime import datetime
@@ -12,8 +13,12 @@ config = None
 
 def openConfig():
       global config
-      with open('config.json') as config_file:  
-        config = json.load(config_file)
+      try:
+        with open('config.json') as config_file:  
+            config = json.load(config_file)
+      
+      except Exception as e:
+          print("Could not open your config file. See README.md for more about config file.: " + str(e))
 
 def authGoogleSheets():
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -39,47 +44,73 @@ def authGoogleSheets():
 
     return creds
 
-def findIndexOfCurrentMonthInList(months):
-    
-    creditcardPaymentMonth = datetime.now().date().month + 1 if datetime.now().date().day < 22 else datetime.now().date().month + 2
-
+def getIndexofMonth(months, targetMonth):
     for possibleMonth in months:
         if possibleMonth:
             month = possibleMonth[0]
             dateObjectForMonth = datetime.strptime(month, '%B %Y')
-            if dateObjectForMonth.month == creditcardPaymentMonth:
+            if dateObjectForMonth.month == targetMonth:
                 return months.index(possibleMonth) + 1
 
-def updateChaseSpentCell(currentSpent):
+def getMonthChaseCell(sheet, offsetFromCurrentMonth):
+
+    BUDGET_SHEET_NAME = config['BUDGET_SHEET_NAME']
+    SPREADSHEET_ID= config['SPREADSHEET_ID']
+    MONTHS_COLUMN_RANGE = config['MONTHS_COLUMN_RANGE'] 
+    CELLOFFSET_TO_MONTH = config['CELLOFFSET_TO_MONTH']
+    COLUMN_TO_UPDATE = config['COLUMN_TO_UPDATE']
+
+    monthrangeStr = BUDGET_SHEET_NAME + "!" + MONTHS_COLUMN_RANGE
+
+    try:
+        resultMonths = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=monthrangeStr).execute()
+        
+        if resultMonths:
+            months = resultMonths['values']
+            creditcardPaymentMonth = datetime.now().date().month + 1 + offsetFromCurrentMonth if datetime.now().date().day < 22 else datetime.now().date().month + 2 + offsetFromCurrentMonth
+            monthIndex = getIndexofMonth(months, creditcardPaymentMonth)
+            chaseSpentIndex = str(monthIndex + CELLOFFSET_TO_MONTH)
+            chaseSpentCell = BUDGET_SHEET_NAME+ "!" + COLUMN_TO_UPDATE + chaseSpentIndex
+            return chaseSpentCell
+
+    except Exception as e:
+        print("Could not get months from spreadsheet because of: " + str(e))
+
+def updateChaseSpentCell(totalBalance):
 
     SPREADSHEET_ID= config['SPREADSHEET_ID']
-    BUDGET_SHEET_NAME = config['BUDGET_SHEET_NAME']
-    MONTHS_COLUMN_RANGE = config['MONTHS_COLUMN_RANGE']
-    COLUMN_TO_UPDATE = config['COLUMN_TO_UPDATE']
-    CELLOFFSET_TO_MONTH = config['CELLOFFSET_TO_MONTH']
-
-    monthrangeName = BUDGET_SHEET_NAME + "!" + MONTHS_COLUMN_RANGE
-
-    googleSheetCreds = authGoogleSheets()
     
-    service = build('sheets', 'v4', credentials=googleSheetCreds)
-    # Call the Sheets API
-    sheet = service.spreadsheets()
-    
-    resultMonths = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=monthrangeName).execute()
-    
-    if resultMonths:
-        months = resultMonths['values']
-        monthIndex = findIndexOfCurrentMonthInList(months)
+    try:
+        googleSheetCreds = authGoogleSheets()
+        service = build('sheets', 'v4', credentials=googleSheetCreds)
+        sheet = service.spreadsheets()
+    except Exception as e:
+        print("Could not authenticate Google Sheets with account")
 
-        chaseSpentIndex = str(monthIndex + CELLOFFSET_TO_MONTH)
-        chaseSpentCell = BUDGET_SHEET_NAME+ "!" + COLUMN_TO_UPDATE + chaseSpentIndex
-        updateValue = {"values":[[currentSpent]]}
+    #check if we are between 7th - 22nd day of month to know if we already paid last months balance
+    if(datetime.now().date().day <= 7 or datetime.now().date().day >= 22):
+        # -1 indicates -1 from current month, basically last month's value
+        lastChaseSpentCell = getMonthChaseCell(sheet, -1)
+        try:
+            lastMonthsBalanceResponse = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=lastChaseSpentCell, valueRenderOption='UNFORMATTED_VALUE').execute()
+            lastMonthsBalance = float(lastMonthsBalanceResponse['values'][0][0])
+        except Exception as e:
+            print("Could not retrieve last months unpaid balance because: "+ str(e))
+    else:
+        lastMonthsBalance = 0
+
+    chaseSpentCell = getMonthChaseCell(sheet,0)
+        
+    currentSpentThisMonth = round(totalBalance - lastMonthsBalance,2)
+    updateValue = {"values":[[currentSpentThisMonth]]}
+
+    try:
         chaseSpentResult = service.spreadsheets().values().update(spreadsheetId=SPREADSHEET_ID, range=chaseSpentCell, valueInputOption='RAW',body=updateValue).execute()
+        print("Successfully updated budget sheet with chase spend amount of: $" + str(currentSpentThisMonth) )
+    except Exception as e:
+        print("Whoops could not update the spreadsheet because of: " + str(e) )
 
-def pretty_print_response(response):
-  print(json.dumps(response, indent=2, sort_keys=True))
-  
+
 def authPlaidClient():
 
     PLAID_CLIENT_ID = config['PLAID_CLIENT_ID']
@@ -112,36 +143,20 @@ def getChaseSpent():
         initChaseToken(client, CHASE_ACCESS_TOKEN)
   
     try:
-        balance_response = client.Accounts.balance.get(CHASE_ACCESS_TOKEN)
-        balance = balance_response['accounts'][0]['balances']['available']
-        limit = float(balance_response['accounts'][0]['balances']['limit'])
+        balanceResponse = client.Accounts.balance.get(CHASE_ACCESS_TOKEN)
+        balance = balanceResponse['accounts'][0]['balances']['available']
+        limit = float(balanceResponse['accounts'][0]['balances']['limit'])
         return round(limit - balance, 2)
     
     except plaid.errors.PlaidError as e:
         print('Could not get balances from Chase because the following error occured: ' + e.code + ':' + e.type)
 
+
 def main():
-    try:
-        openConfig()
-    except Exception as e:
-        print("Could not open your config file. See README.md for more about config file.: " + str(e))
-  
-    try:
-        chaseSpentAmount = getChaseSpent()
-        updateChaseSpentCell(chaseSpentAmount)
-        print("Successfully updated budget sheet with chase spend amount of: $" + str(chaseSpentAmount) )
-    except Exception as e:
-        print("Whoops could not update the spreadsheet because of:"+ str(e) )
+    openConfig()
 
-if __name__ == '__main__':
-   main()
+    chaseSpentAmount = getChaseSpent()* -1
+    updateChaseSpentCell(chaseSpentAmount)
 
-
-
-    
-    
-
-   
-    
-    
-    
+if __name__ == "__main__":
+    main()
