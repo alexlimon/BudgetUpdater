@@ -1,5 +1,7 @@
 requests==2.20.0
-plaid-python>=3.0
+plaid-python>=5.0
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+APScheduler==3.0.0
+configparser==5.0.1
